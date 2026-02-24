@@ -1,0 +1,79 @@
+term,match_type,category,risk,weight,note,exceptions
+героин,word,substance_official,high,10,прямое название вещества,
+кокаин,word,substance_official,high,10,прямое название вещества,
+морфин,word,substance_official,high,10,прямое название вещества,
+кодеин,word,substance_official,high,10,прямое название вещества,
+метадон,word,substance_official,high,10,прямое название вещества,
+каннабис,word,substance_official,high,10,прямое название вещества,
+марихуана,word,substance_official,high,10,прямое название вещества,
+гашиш,word,substance_official,high,10,прямое название вещества,
+опий,word,substance_official,high,10,прямое название вещества,
+фентанил,word,substance_official,high,10,прямое название вещества,
+трамадол,word,substance_official,high,10,прямое название вещества,
+амфетамин,word,substance_official,high,10,прямое название вещества,
+метамфетамин,word,substance_official,high,10,прямое название вещества,
+мдма,word,substance_official,high,10,прямое название вещества,
+лсд,word,substance_official,high,10,прямое название вещества,
+псилоцибин,word,substance_official,high,10,прямое название вещества,
+кетамин,word,substance_official,high,10,прямое название вещества,
+ггб,word,substance_official,high,10,прямое название вещества,
+мефедрон,word,substance_official,high,10,прямое название вещества,
+
+герыч,word,substance_slang,high,9,сленг названия вещества,
+гера,word,substance_slang,high,9,сленг названия вещества,
+хмурый,word,substance_slang,high,9,сленг названия вещества,
+кокс,word,substance_slang,high,9,сленг названия вещества,
+меф,word,substance_slang,high,9,сленг названия вещества,
+мет,word,substance_slang,high,9,сленг названия вещества,
+винт,word,substance_slang,high,9,сленг названия вещества,
+кислота,word,substance_slang,high,9,сленг названия вещества,
+молли,word,substance_slang,high,9,сленг названия вещества,
+ешка,word,substance_slang,high,9,сленг названия вещества,
+экстази,word,substance_slang,high,9,сленг названия вещества,
+шмаль,word,substance_slang,high,9,сленг названия вещества,
+ганжа,word,substance_slang,high,9,сленг названия вещества,
+бошки,word,substance_slang,high,9,сленг названия вещества,
+шишки,word,substance_slang,high,9,сленг названия вещества,
+спайс,word,substance_slang,high,9,сленг названия вещества,
+крокодил,word,substance_slang,high,9,сленг названия вещества,
+
+снег,word,substance_slang,medium,6,контекстный термин,зима|метель|сугроб|холод
+пудра,word,substance_slang,medium,6,контекстный термин,космет|лицо
+трава,word,substance_slang,medium,6,контекстный термин,газон|листва
+косяк,word,substance_slang,medium,6,контекстный термин,ошибка|косяк в работе
+
+закладка,word,distribution,high,9,термин распространения,
+клад,word,distribution,medium,6,контекстный термин,кладоиск
+схрон,word,distribution,high,8,термин распространения,
+дилер,word,distribution,high,9,термин распространения,
+пушер,word,distribution,high,9,термин распространения,
+барыга,word,distribution,high,8,термин распространения,
+коннект,word,distribution,medium,6,контекстный термин,
+плаг,word,distribution,medium,6,контекстный термин,
+
+бонг,word,paraphernalia,medium,5,атрибутика употребления,
+джойнт,word,paraphernalia,medium,5,атрибутика употребления,
+блант,word,paraphernalia,medium,5,атрибутика употребления,
+сплиф,word,paraphernalia,medium,5,атрибутика употребления,
+шприц,word,paraphernalia,medium,5,атрибутика,
+игла,word,paraphernalia,low,3,общее слово,шитье
+фольга,word,paraphernalia,low,3,общее слово,еда
+вейп,word,paraphernalia,low,3,контекстный термин,
+
+ломка,word,state_effect,medium,4,состояние зависимости,
+передоз,word,state_effect,medium,4,состояние,
+кумар,word,state_effect,medium,4,состояние,
+приход,word,state_effect,medium,4,состояние,
+
+420,word,metaphor_specific,medium,5,культурный маркер,
+белые линии,phrase,metaphor_specific,medium,5,метафора,
+пудрить нос,phrase,metaphor_specific,medium,5,метафора,
+
+\bкур(ить|ю|ишь|ит|им|ите|ят|ил|ила|ило|или)\b,regex,use_action,medium,6,упоминание курения,
+\bнюх(ать|аю|аешь|ает|аем|аете|ают|ал|ала|ало|али)\b,regex,use_action,medium,6,упоминание употребления,
+\bколот(ься|ился|илась|ились|юсь|ешься|ется)\b,regex,use_action,high,7,инъекции,
+\bшир(ять|яться|яюсь|ялся|ялась)\b,regex,use_action,high,7,инъекции,
+\bзакин(уться|улся|улась|улись)\b,regex,use_action,high,7,употребление,
+\bюза(ть|ю|ешь|ет|ют|л)\b,regex,use_action,medium,6,употребление,
+\bкуп(ить|лю|ишь|ил|или)\b,regex,acquire,medium,6,контекст покупки,
+\bпрод(ать|ам|ал|али)\b,regex,distribution,high,8,контекст продажи,
