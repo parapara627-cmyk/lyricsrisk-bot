@@ -1,6 +1,7 @@
 import os
 import csv
 import re
+from collections import Counter
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import CommandStart
@@ -18,6 +19,18 @@ again_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+# ---------- ЧЕЛОВЕЧЕСКИЕ НАЗВАНИЯ КАТЕГОРИЙ ----------
+CATEGORY_LABELS = {
+    "substance": "вещество",
+    "action": "действие употребления",
+    "distribution": "добыча/сбыт",
+    "paraphernalia": "атрибутика",
+    "context_positive": "нормализация/романтизация",
+    "context_negative": "негативный контекст",
+    "state": "состояние/эффект",
+    "metaphor": "метафора",
+}
+
 # ---------- ЗАГРУЗКА СЛОВАРЯ ----------
 def load_dictionary():
     items = []
@@ -27,35 +40,46 @@ def load_dictionary():
             term = (row.get("term") or "").strip()
             if not term:
                 continue
-            row["term"] = term
-            row["match_type"] = (row.get("match_type") or "word").strip()
-            row["category"] = (row.get("category") or "unknown").strip()
-            row["risk"] = (row.get("risk") or "low").strip()
-            row["note"] = (row.get("note") or "").strip()
-            row["exceptions"] = (row.get("exceptions") or "").strip()
+
+            match_type = (row.get("match_type") or "word").strip().lower()
+            category = (row.get("category") or "unknown").strip()
+            risk = (row.get("risk") or "low").strip()
+            note = (row.get("note") or "").strip()
+            exceptions = (row.get("exceptions") or "").strip()
+
             try:
-                row["weight"] = int(row.get("weight") or 0)
+                weight = int(row.get("weight") or 0)
             except ValueError:
-                row["weight"] = 0
-            items.append(row)
+                weight = 0
+
+            items.append({
+                "term": term,
+                "match_type": match_type,
+                "category": category,
+                "risk": risk,
+                "weight": weight,
+                "note": note,
+                "exceptions": exceptions,
+            })
     return items
 
 DICTIONARY = load_dictionary()
 
 # ---------- АНАЛИЗ ----------
-def normalize(text):
+def normalize(text: str) -> str:
     text = text.lower().replace("ё", "е")
-    text = re.sub(r"[^\w\s]", " ", text)
+    text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
-def exceptions_hit(exceptions, context):
+def exceptions_hit(exceptions: str, context: str) -> bool:
     if not exceptions:
         return False
-    parts = [p.strip().lower() for p in exceptions.split("|") if p.strip()]
-    return any(p in context for p in parts)
+    parts = [p.strip().lower().replace("ё", "е") for p in exceptions.split("|") if p.strip()]
+    ctx = context.lower().replace("ё", "е")
+    return any(p in ctx for p in parts)
 
-def find_hits(text):
+def find_hits(text: str):
     t = normalize(text)
     hits = []
 
@@ -63,77 +87,131 @@ def find_hits(text):
         term = e["term"]
         mt = e["match_type"]
 
-        pattern = term if mt == "regex" else r"\b" + re.escape(term.lower()) + r"\b"
+        if mt == "regex":
+            pattern = term
+        else:
+            # word/phrase: границы слова
+            pattern = r"\b" + re.escape(term.lower().replace("ё", "е")) + r"\b"
 
         try:
             for m in re.finditer(pattern, t):
-                context = t[max(0, m.start()-70): m.end()+70]
-
-                if exceptions_hit(e.get("exceptions"), context):
+                context = t[max(0, m.start() - 70): min(len(t), m.end() + 70)]
+                if exceptions_hit(e.get("exceptions", ""), context):
                     continue
 
                 hits.append({
-                    "term": term,
+                    "term": term,                # как в словаре
+                    "matched": m.group(0),        # что реально встретилось
                     "category": e["category"],
                     "risk": e["risk"],
                     "weight": e["weight"],
-                    "note": e["note"]
+                    "note": e["note"],
+                    "start": m.start(),
                 })
-        except:
+        except re.error:
+            # если regex в словаре кривой — просто пропускаем
             continue
 
-    return hits
+    # дедуп совпадений
+    uniq = {}
+    for h in hits:
+        key = (h["term"], h["start"])
+        uniq[key] = h
 
-def score(hits):
+    return sorted(uniq.values(), key=lambda x: (x["start"], -x["weight"]))
+
+def score_and_reasons(hits):
     total = sum(h["weight"] for h in hits)
+    cats = set(h["category"] for h in hits)
+
+    has_substance = "substance" in cats
+    has_action = "action" in cats
+    has_positive = "context_positive" in cats
+
+    reasons = []
+
+    # Сцена: вещество + действие
+    if has_substance and has_action:
+        total += 10
+        reasons.append("есть сочетание «вещество + действие»")
+
+    # Нормализация: вещество + позитивный маркер
+    if has_substance and has_positive:
+        total += 6
+        reasons.append("есть маркеры нормализации рядом с темой")
+
+    # Плотность/масштаб: много совпадений
+    if len(hits) >= 4:
+        total += 4
+        reasons.append("много совпадений по теме")
+
     if total >= 25:
-        return "ВЫСОКИЙ", total
+        return "ВЫСОКИЙ", total, reasons
     if total >= 10:
-        return "СРЕДНИЙ", total
+        return "СРЕДНИЙ", total, reasons
     if total > 0:
-        return "НИЗКИЙ", total
-    return "НЕ ОБНАРУЖЕНО", total
+        return "НИЗКИЙ", total, reasons
+    return "НЕ ОБНАРУЖЕНО", total, reasons
 
 # ---------- ОТЧЁТ ----------
-def build_report(text):
+def build_report(text: str):
     hits = find_hits(text)
-    level, total = score(hits)
+    level, total, reasons = score_and_reasons(hits)
 
-    categories = list(set(h["category"] for h in hits))
+    cat_counter = Counter([h["category"] for h in hits])
 
-    report = f"🟥 Уровень риска: {level}\n\n"
-    report += f"📊 Совпадений: {len(hits)}\n"
-    if categories:
-        report += "Категории:\n" + "\n".join(f"— {c}" for c in categories) + "\n\n"
+    lines = []
+    lines.append(f"🟥 Уровень риска: {level}")
+    lines.append("")
+    lines.append(f"📊 Совпадений: {len(hits)} | Балл: {total}")
+
+    if cat_counter:
+        lines.append("Категории:")
+        for c, n in cat_counter.most_common():
+            lines.append(f"— {CATEGORY_LABELS.get(c, c)}: {n}")
+        lines.append("")
+
+    if reasons:
+        lines.append("📌 Почему так:")
+        for r in reasons:
+            lines.append(f"— {r}")
+        lines.append("")
 
     if hits:
-        report += "🔍 Найденные фрагменты:\n"
-        for h in hits[:8]:
-            report += f"— {h['term']} → {h['category']}\n"
-        report += "\n"
-
-    # Интерпретация
-    if level == "ВЫСОКИЙ":
-        report += "🧠 Текст содержит прямые или множественные чувствительные формулировки.\n\n"
-        report += "⚠️ Возможна необходимость дополнительной проверки перед публикацией.\n\n"
-    elif level == "СРЕДНИЙ":
-        report += "🧠 Обнаружены потенциально чувствительные формулировки.\n\n"
-        report += "⚠️ Возможны вопросы при модерации.\n\n"
-    elif level == "НИЗКИЙ":
-        report += "🧠 Найдены отдельные контекстные совпадения.\n\n"
-        report += "⚠️ Вероятность ограничений минимальна.\n\n"
+        lines.append("🔍 Найденные фрагменты:")
+        for h in hits[:10]:
+            shown = h.get("matched") or h["term"]
+            cat = CATEGORY_LABELS.get(h["category"], h["category"])
+            note = f" — {h['note']}" if h.get("note") else ""
+            lines.append(f"— «{shown}» → {cat}{note}")
+        if len(hits) > 10:
+            lines.append(f"…ещё совпадений: {len(hits) - 10}")
+        lines.append("")
     else:
-        report += "🧠 Совпадений не обнаружено.\n\n"
+        lines.append("Совпадений по словарю не найдено.")
+        lines.append("")
 
-    report += "📌 Рекомендации:\n"
-    report += "• проверить контекст формулировок\n"
-    report += "• избегать прямых упоминаний веществ\n"
-    report += "• обратить внимание на сочетание действий\n\n"
+    # Интерпретация (коротко, без юридических формулировок)
+    if level == "ВЫСОКИЙ":
+        lines.append("🧠 Текст содержит прямые или множественные чувствительные формулировки.")
+        lines.append("⚠️ Перед публикацией стоит сделать дополнительную проверку формулировок.")
+    elif level == "СРЕДНИЙ":
+        lines.append("🧠 Обнаружены потенциально чувствительные формулировки.")
+        lines.append("⚠️ Возможны вопросы при модерации/проверке.")
+    elif level == "НИЗКИЙ":
+        lines.append("🧠 Найдены отдельные контекстные совпадения.")
+        lines.append("⚠️ Риск невысокий, но стоит проверить контекст.")
+    else:
+        lines.append("🧠 Существенных совпадений по словарю не обнаружено.")
 
-    report += "🛡 Дисклеймер:\n"
-    report += "Справочный автоматический анализ по словарю. Не является юридическим заключением."
+    lines.append("")
+    lines.append("📌 Рекомендации:")
+    lines.append("• проверь места, где встречаются «вещество + действие»")
+    lines.append("• если релиз публичный/коммерческий — сделай финальную проверку текста")
+    lines.append("")
+    lines.append("🛡 Дисклеймер: справочный автоматический анализ по словарю. Не является юридическим заключением.")
 
-    return report
+    return "\n".join(lines)
 
 # ---------- TELEGRAM ----------
 dp = Dispatcher()
@@ -141,33 +219,39 @@ dp = Dispatcher()
 @dp.message(CommandStart())
 async def start(message: Message):
     await message.answer(
-        "Отправьте текст для проверки",
+        "Нажми «Проверить текст» и пришли текст трека одним сообщением.",
         reply_markup=start_keyboard
     )
 
 @dp.message(F.text == "Проверить текст")
 async def ask_text(message: Message):
-    await message.answer("Вставьте текст трека")
+    await message.answer("Вставь текст трека одним сообщением.")
 
 @dp.message(F.text == "Проверить ещё")
 async def again(message: Message):
-    await message.answer("Отправьте новый текст")
+    await message.answer("Ок. Пришли новый текст одним сообщением.")
 
 @dp.message(F.text)
 async def handle_text(message: Message):
-    text = message.text.strip()
+    text = (message.text or "").strip()
 
-    if len(text) < 10:
+    # не обрабатываем короткие сообщения и нажатия кнопок как текст трека
+    if text in ("Проверить текст", "Проверить ещё"):
+        return
+    if len(text) < 20:
+        await message.answer("Пришли текст подлиннее (хотя бы 1–2 строки).")
         return
 
     report = build_report(text)
 
     if len(report) > 3800:
-        report = report[:3800]
+        report = report[:3800] + "\n…(обрезано по лимиту Telegram)"
 
     await message.answer(report, reply_markup=again_keyboard)
 
 async def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN отсутствует в окружении. Проверь Railway → Variables.")
     bot = Bot(token=BOT_TOKEN)
     await dp.start_polling(bot)
 
