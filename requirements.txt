@@ -1,1 +1,1 @@
-python
+aiogram==3.7.0
