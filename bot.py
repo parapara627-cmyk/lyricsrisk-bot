@@ -5,6 +5,7 @@ from collections import Counter
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import CommandStart
+from aiogram.client.session.aiohttp import AiohttpSession
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -31,11 +32,20 @@ CATEGORY_LABELS = {
     "metaphor": "метафора",
 }
 
-# ---------- ЗАГРУЗКА СЛОВАРЯ ----------
+# ---------- ЗАГРУЗКА СЛОВАРЯ (УСТОЙЧИВАЯ) ----------
 def load_dictionary():
     items = []
-    with open("dictionary.csv", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+
+    # ВАЖНО:
+    # - utf-8-sig убирает скрытый BOM из заголовков
+    # - авто-определение delimiter спасает, если CSV экспортирован с ';'
+    with open("dictionary.csv", encoding="utf-8-sig") as f:
+        sample = f.read(4096)
+        f.seek(0)
+        delimiter = ";" if sample.count(";") > sample.count(",") else ","
+
+        reader = csv.DictReader(f, delimiter=delimiter)
+
         for row in reader:
             term = (row.get("term") or "").strip()
             if not term:
@@ -61,6 +71,7 @@ def load_dictionary():
                 "note": note,
                 "exceptions": exceptions,
             })
+
     return items
 
 DICTIONARY = load_dictionary()
@@ -90,7 +101,6 @@ def find_hits(text: str):
         if mt == "regex":
             pattern = term
         else:
-            # word/phrase: границы слова
             pattern = r"\b" + re.escape(term.lower().replace("ё", "е")) + r"\b"
 
         try:
@@ -100,8 +110,8 @@ def find_hits(text: str):
                     continue
 
                 hits.append({
-                    "term": term,                # как в словаре
-                    "matched": m.group(0),        # что реально встретилось
+                    "term": term,
+                    "matched": m.group(0),
                     "category": e["category"],
                     "risk": e["risk"],
                     "weight": e["weight"],
@@ -109,10 +119,9 @@ def find_hits(text: str):
                     "start": m.start(),
                 })
         except re.error:
-            # если regex в словаре кривой — просто пропускаем
             continue
 
-    # дедуп совпадений
+    # дедуп
     uniq = {}
     for h in hits:
         key = (h["term"], h["start"])
@@ -130,17 +139,14 @@ def score_and_reasons(hits):
 
     reasons = []
 
-    # Сцена: вещество + действие
     if has_substance and has_action:
         total += 10
         reasons.append("есть сочетание «вещество + действие»")
 
-    # Нормализация: вещество + позитивный маркер
     if has_substance and has_positive:
         total += 6
         reasons.append("есть маркеры нормализации рядом с темой")
 
-    # Плотность/масштаб: много совпадений
     if len(hits) >= 4:
         total += 4
         reasons.append("много совпадений по теме")
@@ -157,7 +163,6 @@ def score_and_reasons(hits):
 def build_report(text: str):
     hits = find_hits(text)
     level, total, reasons = score_and_reasons(hits)
-
     cat_counter = Counter([h["category"] for h in hits])
 
     lines = []
@@ -191,7 +196,6 @@ def build_report(text: str):
         lines.append("Совпадений по словарю не найдено.")
         lines.append("")
 
-    # Интерпретация (коротко, без юридических формулировок)
     if level == "ВЫСОКИЙ":
         lines.append("🧠 Текст содержит прямые или множественные чувствительные формулировки.")
         lines.append("⚠️ Перед публикацией стоит сделать дополнительную проверку формулировок.")
@@ -231,13 +235,33 @@ async def ask_text(message: Message):
 async def again(message: Message):
     await message.answer("Ок. Пришли новый текст одним сообщением.")
 
+# ДИАГНОСТИКА: покажет, видит ли контейнер dictionary.csv и сколько строк загрузилось
+@dp.message(F.text == "/diag")
+async def diag(message: Message):
+    try:
+        files = ", ".join(sorted(os.listdir(".")))
+    except Exception as e:
+        files = f"ошибка listdir: {e}"
+
+    sample_terms = [d.get("term") for d in DICTIONARY[:10]]
+    await message.answer(
+        "DIAG\n"
+        f"DICT_SIZE: {len(DICTIONARY)}\n"
+        f"FILES: {files}\n"
+        f"FIRST_TERMS: {sample_terms}"
+    )
+
 @dp.message(F.text)
 async def handle_text(message: Message):
     text = (message.text or "").strip()
 
-    # не обрабатываем короткие сообщения и нажатия кнопок как текст трека
     if text in ("Проверить текст", "Проверить ещё"):
         return
+
+    # /diag уже обработали, но на всякий
+    if text.startswith("/"):
+        return
+
     if len(text) < 20:
         await message.answer("Пришли текст подлиннее (хотя бы 1–2 строки).")
         return
@@ -252,7 +276,11 @@ async def handle_text(message: Message):
 async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN отсутствует в окружении. Проверь Railway → Variables.")
-    bot = Bot(token=BOT_TOKEN)
+
+    # Увеличенный таймаут — меньше TelegramNetworkError на polling
+    session = AiohttpSession(timeout=30)
+    bot = Bot(token=BOT_TOKEN, session=session)
+
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
